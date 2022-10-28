@@ -1,0 +1,266 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: on-prem
+  labels:
+    crossplane.io/xrd: xmangodb.mangodb.de
+    provider: on-prem
+spec:
+  writeConnectionSecretsToNamespace: crossplane-system
+  compositeTypeRef:
+    apiVersion: mangodb.de/v1alpha1
+    kind: XMangoDB
+  resources:
+  - name: mongodb-community
+    base:
+      apiVersion: kubernetes.crossplane.io/v1alpha1
+      kind: Object
+      spec:
+        forProvider:
+          manifest:
+            apiVersion: mongodbcommunity.mongodb.com/v1
+            kind: MongoDBCommunity
+            metadata: {}
+            spec:
+              type: ReplicaSet
+              security:
+                authentication:
+                  modes: ["SCRAM"]
+              users:
+              - db: admin
+                name: admin
+                passwordSecretRef:
+                  name: mongodb-credentials
+                roles:
+                - db: admin
+                  name: clusterAdmin
+                - db: admin
+                  name: userAdminAnyDatabase
+                scramCredentialsSecretName: admin-scram
+        providerConfigRef:
+          name: kubernetes-provider
+    patches:
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.replicas
+      toFieldPath: spec.forProvider.manifest.spec.members
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.version
+      toFieldPath: spec.forProvider.manifest.spec.version
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.claimRef.namespace
+      toFieldPath: spec.forProvider.manifest.metadata.namespace
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.claimRef.name
+      toFieldPath: spec.forProvider.manifest.metadata.name
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.claimRef.name
+      transforms:
+      - type: string
+        string:
+          fmt: "%s-credentials"
+      toFieldPath: spec.forProvider.manifest.spec.users[0].passwordSecretRef.name
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.claimRef.name
+      transforms:
+      - type: string
+        string:
+          fmt: "%s-admin-scram"
+      toFieldPath: spec.forProvider.manifest.spec.users[0].scramCredentialsSecretName
+  - name: credentials
+    base:
+      apiVersion: kubernetes.crossplane.io/v1alpha1
+      kind: Object
+      spec:
+        forProvider:
+          manifest:
+            apiVersion: v1
+            metadata: {}
+            kind: Secret
+            type: Opaque
+            stringData:
+              password: mango
+        providerConfigRef:
+          name: kubernetes-provider
+    patches:
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.claimRef.namespace
+      toFieldPath: spec.forProvider.manifest.metadata.namespace
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.claimRef.name
+      transforms:
+      - type: string
+        string:
+          fmt: "%s-credentials"
+      toFieldPath: spec.forProvider.manifest.metadata.name
+  - name: database-serviceaccount
+    base:
+      apiVersion: kubernetes.crossplane.io/v1alpha1
+      kind: Object
+      spec:
+        forProvider:
+          manifest:
+            apiVersion: v1
+            kind: ServiceAccount
+            metadata:
+              name: mongodb-database
+        providerConfigRef:
+          name: kubernetes-provider
+    patches:
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.claimRef.namespace
+      toFieldPath: spec.forProvider.manifest.metadata.namespace
+  - name: operator-serviceaccount
+    base:
+      apiVersion: kubernetes.crossplane.io/v1alpha1
+      kind: Object
+      spec:
+        forProvider:
+          manifest:
+            apiVersion: v1
+            kind: ServiceAccount
+            metadata:
+              name: mongodb-kubernetes-operator
+        providerConfigRef:
+          name: kubernetes-provider
+    patches:
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.claimRef.namespace
+      toFieldPath: spec.forProvider.manifest.metadata.namespace
+  - name: operator-role
+    base:
+      apiVersion: kubernetes.crossplane.io/v1alpha1
+      kind: Object
+      spec:
+        forProvider:
+          manifest:
+            apiVersion: rbac.authorization.k8s.io/v1
+            kind: Role
+            metadata:
+              name: mongodb-kubernetes-operator
+            rules:
+            - apiGroups:
+              - ""
+              resources:
+              - pods
+              - services
+              - configmaps
+              - secrets
+              verbs:
+              - create
+              - delete
+              - get
+              - list
+              - patch
+              - update
+              - watch
+            - apiGroups:
+              - apps
+              resources:
+              - statefulsets
+              verbs:
+              - create
+              - delete
+              - get
+              - list
+              - patch
+              - update
+              - watch
+            - apiGroups:
+              - mongodbcommunity.mongodb.com
+              resources:
+              - mongodbcommunity
+              - mongodbcommunity/status
+              - mongodbcommunity/spec
+              - mongodbcommunity/finalizers
+              verbs:
+              - get
+              - patch
+              - list
+              - update
+              - watch
+        providerConfigRef:
+          name: kubernetes-provider
+    patches:
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.claimRef.namespace
+      toFieldPath: spec.forProvider.manifest.metadata.namespace
+  - name: operator-binding
+    base:
+      apiVersion: kubernetes.crossplane.io/v1alpha1
+      kind: Object
+      spec:
+        forProvider:
+          manifest:
+            kind: RoleBinding
+            apiVersion: rbac.authorization.k8s.io/v1
+            metadata:
+              name: mongodb-kubernetes-operator
+            subjects:
+            - kind: ServiceAccount
+              name: mongodb-kubernetes-operator
+            roleRef:
+              kind: Role
+              name: mongodb-kubernetes-operator
+              apiGroup: rbac.authorization.k8s.io
+        providerConfigRef:
+          name: kubernetes-provider
+    patches:
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.claimRef.namespace
+      toFieldPath: spec.forProvider.manifest.metadata.namespace
+  - name: db-role
+    base:
+      apiVersion: kubernetes.crossplane.io/v1alpha1
+      kind: Object
+      spec:
+        forProvider:
+          manifest:
+            kind: Role
+            apiVersion: rbac.authorization.k8s.io/v1
+            metadata:
+              name: mongodb-database
+            rules:
+              - apiGroups:
+                  - ""
+                resources:
+                  - secrets
+                verbs:
+                  - get
+              - apiGroups:
+                  - ""
+                resources:
+                  - pods
+                verbs:
+                  - patch
+                  - delete
+                  - get
+        providerConfigRef:
+          name: kubernetes-provider
+    patches:
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.claimRef.namespace
+      toFieldPath: spec.forProvider.manifest.metadata.namespace
+  - name: db-binding
+    base:
+      apiVersion: kubernetes.crossplane.io/v1alpha1
+      kind: Object
+      spec:
+        forProvider:
+          manifest:
+            kind: RoleBinding
+            apiVersion: rbac.authorization.k8s.io/v1
+            metadata:
+              name: $
+            subjects:
+            - kind: ServiceAccount
+              name: mongodb-database
+            roleRef:
+              kind: Role
+              name: mongodb-database
+              apiGroup: rbac.authorization.k8s.io
+        providerConfigRef:
+          name: kubernetes-provider
+    patches:
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.claimRef.namespace
+      toFieldPath: spec.forProvider.manifest.metadata.namespace

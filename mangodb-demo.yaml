@@ -1,0 +1,8 @@
+apiVersion: mangodb.de/v1alpha1
+kind: MangoDB
+metadata:
+  name: demo
+spec:
+  replicas: 1
+  version: "4.2.6"
+
